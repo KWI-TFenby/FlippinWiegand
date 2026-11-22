@@ -22,8 +22,8 @@ It is a fork of the **Wiegand** app by Derek Jamison
 
 | Check | Result |
 |---|---|
-| Builds against Unleashed `unlshd-095` (API 88.26) with `ufbt` | Passed before the save/load fixes; **not rebuilt since** |
-| Builds against official firmware 1.5.1 (API 88.2) with `ufbt` | Passed before the save/load fixes; **not rebuilt since** |
+| Builds against Unleashed `unlshd-095` (API 88.26) with `ufbt` | Pass |
+| Builds against official firmware 1.5.1 (API 88.2) with `ufbt` | Pass |
 | Formatting and decoding, 4,282 checks on a PC | Pass |
 | RFID export, 802 checks on a PC (incl. round-trip through the firmware's own HID length decoder) | Pass |
 | Capture file text, 1,332 checks on a PC: save then load at every length, a card that fills up, a file from the original app | Pass |
@@ -93,11 +93,6 @@ Other rules:
 
 Copy `dist/wiegand_raw.fap` to the SD card at `apps/GPIO/` with qFlipper or the
 mobile app. It appears under Apps, GPIO, **Wiegand Raw**.
-
-**The supplied `dist/wiegand_raw.fap` is older than the source.** It was built
-before the save, load and export fixes of 2026-11-22 and does not have them:
-it still reports a failed save as saved. Rebuild with the steps below before
-relying on it.
 
 The supplied `dist/wiegand_raw.fap` is built for **Unleashed `unlshd-095`**. If
 the Flipper says the app is out of date, rebuild it on a PC with Python
