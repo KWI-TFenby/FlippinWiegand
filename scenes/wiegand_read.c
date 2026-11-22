@@ -44,6 +44,7 @@ bool wiegand_read_scene_on_event(void* context, SceneManagerEvent event) {
     if(event.event == WiegandCaptureFrameEvent) {
         if(wiegand_capture_has_frame()) {
             notification_message(app->notifications, &sequence_single_vibro);
+            app->status[0] = '\0'; /* new frame: nothing saved or exported yet */
             scene_manager_next_scene(app->scene_manager, WiegandDataScene);
         }
         return true;

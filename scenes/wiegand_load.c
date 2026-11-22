@@ -6,67 +6,15 @@
  * Reviewed by [your name here] on [date of review]
  * Thoroughness of review: [0-100%]
  *
- * Loads a saved capture for viewing. Parses the RAW_Data line, which has the
- * same layout as the original app's files.
+ * Loads a saved capture for viewing. The parsing is in wiegand_file.c.
  */
 #include "../wiegand.h"
 
-static bool is_digit(char ch) {
-    return ch >= '0' && ch <= '9';
-}
-
-/* Reads an unsigned decimal number starting at *pos, and leaves *pos on the
- * first character after it. */
-static uint32_t parse_number(FuriString* line, size_t* pos, size_t length) {
-    uint32_t value = 0;
-    while(*pos < length && is_digit(furi_string_get_char(line, *pos))) {
-        value = value * 10 + (uint32_t)(furi_string_get_char(line, *pos) - '0');
-        (*pos)++;
-    }
-    return value;
-}
-
-static void skip_spaces(FuriString* line, size_t* pos, size_t length) {
-    while(*pos < length && furi_string_get_char(line, *pos) == ' ') (*pos)++;
-}
-
-/* "RAW_Data: D0 0 2243 D1 124823 127090 ..." */
-static void parse_raw_data(FuriString* line) {
-    size_t length = furi_string_size(line);
-    size_t pos = strlen("RAW_Data: ");
-    int n = 0;
-
-    while(pos < length) {
-        if(furi_string_get_char(line, pos) != 'D') {
-            pos++;
-            continue;
-        }
-        pos++;
-        if(pos >= length) break;
-        bool value = furi_string_get_char(line, pos) == '1';
-        pos++;
-        skip_spaces(line, &pos, length);
-        uint32_t fall = parse_number(line, &pos, length);
-        skip_spaces(line, &pos, length);
-        uint32_t rise = parse_number(line, &pos, length);
-
-        if(n >= MAX_BITS) {
-            overflow_bits++;
-            continue;
-        }
-        data[n] = value;
-        data_fall[n] = fall;
-        data_rise[n] = rise;
-        n++;
-    }
-    bit_count = n;
-}
-
 void wiegand_load_scene_on_enter(void* context) {
     App* app = context;
-    bit_count = 0;
-    overflow_bits = 0;
-    glitch_count = 0;
+    WiegandFileLoad load;
+    wiegand_file_load_begin(&load);
+    app->status[0] = '\0';
 
     DialogsFileBrowserOptions browser_options;
     dialog_file_browser_set_basic_options(&browser_options, WIEGAND_SAVE_EXTENSION, NULL);
@@ -95,10 +43,7 @@ void wiegand_load_scene_on_enter(void* context) {
                     if(ch != '\r') furi_string_push_back(buffer, ch);
                 }
 
-                if(furi_string_start_with(buffer, "RAW_Data: ")) {
-                    parse_raw_data(buffer);
-                    break;
-                }
+                if(wiegand_file_load_line(&load, furi_string_get_cstr(buffer))) break;
             }
             storage_file_close(data_file);
         }
@@ -112,6 +57,13 @@ void wiegand_load_scene_on_enter(void* context) {
         scene_manager_search_and_switch_to_previous_scene(
             app->scene_manager, WiegandMainMenuScene);
     } else {
+        if(!wiegand_file_load_bits_match(&load)) {
+            snprintf(
+                app->status,
+                sizeof(app->status),
+                "FILE DAMAGED? Says %d bits",
+                load.declared_bits);
+        }
         data_saved = true;
         scene_manager_next_scene(app->scene_manager, WiegandDataScene);
     }

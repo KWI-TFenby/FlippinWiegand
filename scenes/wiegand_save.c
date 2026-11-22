@@ -22,73 +22,62 @@ static void ensure_dir_exists(Storage* storage) {
     }
 }
 
-static void write_line(File* file, FuriString* buffer) {
-    storage_file_write(file, furi_string_get_cstr(buffer), furi_string_size(buffer));
+static bool wiegand_save_sink(void* context, const char* text, size_t length) {
+    File* file = context;
+    return storage_file_write(file, text, length) == length;
+}
+
+static void wiegand_save_path(App* app, FuriString* file_path) {
+    furi_string_printf(
+        file_path, "%s/%s%s", WIEGAND_SAVE_FOLDER, app->file_name, WIEGAND_SAVE_EXTENSION);
 }
 
 /* Writes the frame in the capture buffer to <save folder>/<app->file_name>.wgn.
- * The RAW_Data line keeps the format of the original app, so its files load
- * here. The other lines are plain text for reading on a PC. */
-void wiegand_save(void* context) {
+ * Returns true only if the whole file was written. A file that could not be
+ * finished is removed: half a RAW_Data line would load as a shorter frame. */
+bool wiegand_save(void* context) {
     App* app = context;
-    int n = bit_count;
-    char text[WIEGAND_BINARY_TEXT_SIZE];
-    FuriString* buffer = furi_string_alloc();
+    bool ok = false;
     FuriString* file_path = furi_string_alloc();
-    furi_string_printf(
-        file_path, "%s/%s%s", WIEGAND_SAVE_FOLDER, app->file_name, WIEGAND_SAVE_EXTENSION);
+    wiegand_save_path(app, file_path);
 
     Storage* storage = furi_record_open(RECORD_STORAGE);
     ensure_dir_exists(storage);
     File* data_file = storage_file_alloc(storage);
     if(storage_file_open(
            data_file, furi_string_get_cstr(file_path), FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-        furi_string_printf(buffer, "Filetype: Flipper Wiegand Key File\nVersion: 1\n");
-        write_line(data_file, buffer);
-        furi_string_printf(buffer, "Protocol: RAW\nBits: %d\n", n);
-        write_line(data_file, buffer);
-        furi_string_printf(buffer, "Truncated_Bits: %lu\nGlitches: %lu\n", overflow_bits, glitch_count);
-        write_line(data_file, buffer);
-
-        furi_string_printf(buffer, "RAW_Data: ");
-        for(int i = 0; i < n; i++) {
-            furi_string_cat_printf(
-                buffer,
-                "D%d %lu %lu ",
-                data[i] ? 1 : 0,
-                data_fall[i] - data_fall[0],
-                data_rise[i] - data_fall[0]);
+        ok = wiegand_file_write(wiegand_save_sink, data_file);
+        if(!storage_file_close(data_file)) ok = false;
+        if(!ok) {
+            FURI_LOG_E(TAG, "Could not finish %s", furi_string_get_cstr(file_path));
+            storage_simply_remove(storage, furi_string_get_cstr(file_path));
         }
-        furi_string_push_back(buffer, '\n');
-        write_line(data_file, buffer);
-
-        wiegand_format_binary_plain(data, n, text, sizeof(text));
-        furi_string_printf(buffer, "PACS_Binary: %s\n", text);
-        write_line(data_file, buffer);
-
-        wiegand_format_hex(data, n, false, text, sizeof(text));
-        furi_string_printf(buffer, "Hex_Right_Justified: %s\n", text);
-        write_line(data_file, buffer);
-
-        wiegand_format_hex(data, n, true, text, sizeof(text));
-        furi_string_printf(buffer, "Hex_Left_Justified: %s\n", text);
-        write_line(data_file, buffer);
-
-        storage_file_close(data_file);
     } else {
-        FURI_LOG_E(TAG, "Could not write %s", furi_string_get_cstr(file_path));
+        FURI_LOG_E(TAG, "Could not open %s", furi_string_get_cstr(file_path));
     }
 
     storage_file_free(data_file);
     furi_record_close(RECORD_STORAGE);
     furi_string_free(file_path);
-    furi_string_free(buffer);
+    return ok;
+}
+
+/* True when a capture with the name in app->file_name is already on the card. */
+static bool wiegand_save_name_taken(App* app) {
+    FuriString* file_path = furi_string_alloc();
+    wiegand_save_path(app, file_path);
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    bool taken = storage_file_exists(storage, furi_string_get_cstr(file_path));
+    furi_record_close(RECORD_STORAGE);
+    furi_string_free(file_path);
+    return taken;
 }
 
 /* Exports the frame in the capture buffer as a Flipper RFID key file in the
  * stock 125 kHz RFID app's folder, for its decoder and analysis views. Writes
  * the same text layout that app writes: header, "Key type", "Data" (uppercase
- * hex, space-separated). The result is reported in app->rfid_status. */
+ * hex, space-separated). The result is reported in app->status, with a warning
+ * when the export is cleaner than the read it came from. */
 void wiegand_export_rfid(void* context) {
     App* app = context;
     uint8_t rfid_data[WIEGAND_RFID_MAX_DATA];
@@ -98,7 +87,7 @@ void wiegand_export_rfid(void* context) {
 
     if(!wiegand_rfid_build(
            data, bit_count, rfid_data, &rfid_len, &keytype, reason, sizeof(reason))) {
-        snprintf(app->rfid_status, sizeof(app->rfid_status), "No RFID export: %s", reason);
+        snprintf(app->status, sizeof(app->status), "No RFID export: %s", reason);
         return;
     }
 
@@ -145,14 +134,19 @@ void wiegand_export_rfid(void* context) {
     furi_record_close(RECORD_STORAGE);
 
     if(ok) {
+        /* H10301 keeps only the facility code and card number, and the RFID
+         * app works the parity out again. So a misread exports as a clean
+         * card: say so. */
         snprintf(
-            app->rfid_status,
-            sizeof(app->rfid_status),
-            "Saved %s: lfrfid/%s",
+            app->status,
+            sizeof(app->status),
+            "Saved %s: lfrfid/%s%s%s",
             keytype,
-            name);
+            name,
+            wiegand_rfid_parity_ok(data, bit_count) ? "" : "\nWARNING: bad parity not kept",
+            (glitch_count > 0) ? "\nWARNING: read had glitches" : "");
     } else {
-        snprintf(app->rfid_status, sizeof(app->rfid_status), "RFID write failed");
+        snprintf(app->status, sizeof(app->status), "RFID write failed");
     }
 
     furi_string_free(file_path);
@@ -193,9 +187,23 @@ bool wiegand_save_scene_on_event(void* context, SceneManagerEvent event) {
     bool consumed = false;
     if(event.type == SceneManagerEventTypeCustom &&
        event.event == WiegandDataSceneSaveFileEvent) {
-        wiegand_save(app);
-        data_saved = true;
-        scene_manager_search_and_switch_to_previous_scene(app->scene_manager, WiegandDataScene);
+        /* On either problem, stay on the keyboard with the name still there,
+         * so the capture is not lost and the save can be tried again. */
+        if(wiegand_save_name_taken(app)) {
+            text_input_set_header_text(app->text_input, "Name already used");
+        } else if(!wiegand_save(app)) {
+            text_input_set_header_text(app->text_input, "Save failed: SD?");
+        } else {
+            data_saved = true;
+            snprintf(
+                app->status,
+                sizeof(app->status),
+                "Saved %s%s",
+                app->file_name,
+                WIEGAND_SAVE_EXTENSION);
+            scene_manager_search_and_switch_to_previous_scene(
+                app->scene_manager, WiegandDataScene);
+        }
         consumed = true;
     }
     return consumed;

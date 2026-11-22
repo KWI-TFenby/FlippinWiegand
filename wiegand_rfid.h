@@ -34,6 +34,14 @@
 const char* wiegand_rfid_keytype(int n);
 
 /**
+ * False when exporting this frame would hide a bad read. A 26-bit frame is
+ * written as H10301, which stores no parity bits, so one with wrong parity
+ * comes out looking like a good card. HIDProx keeps every bit, so the longer
+ * lengths always return true.
+ */
+bool wiegand_rfid_parity_ok(const volatile bool* bits, int n);
+
+/**
  * Builds the LFRFID Data bytes for the frame in `bits` (length `n`).
  * On success: fills `out` (at least WIEGAND_RFID_MAX_DATA bytes) and `*out_len`,
  * points `*keytype` at a static string, and returns true.

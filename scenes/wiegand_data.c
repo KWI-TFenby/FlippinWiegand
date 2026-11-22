@@ -26,8 +26,8 @@ static void wiegand_data_build_text(App* app, FuriString* buffer) {
     if(!wiegand_format_known_length(n)) {
         furi_string_cat_printf(buffer, " (odd length)");
     }
-    if(app->rfid_status[0] != '\0') {
-        furi_string_cat_printf(buffer, "\n%s", app->rfid_status);
+    if(app->status[0] != '\0') {
+        furi_string_cat_printf(buffer, "\n%s", app->status);
     }
     if(overflow_bits > 0) {
         furi_string_cat_printf(buffer, "\nTRUNCATED: %lu more bits", overflow_bits);
@@ -78,8 +78,9 @@ static void wiegand_data_build_text(App* app, FuriString* buffer) {
     }
 }
 
-/* Rebuilds the screen from the current capture and status. Does not clear the
- * status, so it can be called again after an export to show the result. */
+/* Rebuilds the screen from the current capture and status. The status is
+ * cleared by whichever scene puts a new frame in the buffer (read, load), not
+ * here, so a save or export result is still shown when this screen comes back. */
 static void wiegand_data_render(App* app) {
     widget_reset(app->widget);
     widget_add_string_element(app->widget, 0, 0, AlignLeft, AlignTop, FontPrimary, "Wiegand Data");
@@ -105,7 +106,6 @@ static void wiegand_data_render(App* app) {
 
 void wiegand_data_scene_on_enter(void* context) {
     App* app = context;
-    app->rfid_status[0] = '\0'; /* fresh capture, no export yet */
     wiegand_data_render(app);
 }
 

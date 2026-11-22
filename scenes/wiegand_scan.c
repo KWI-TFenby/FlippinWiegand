@@ -9,6 +9,7 @@
 #include "../wiegand.h"
 
 static uint32_t scan_saved = 0;
+static uint32_t scan_failed = 0; /* reads that could not be written to the card */
 static int scan_last_bits = 0;
 static char scan_last_hex[WIEGAND_HEX_TEXT_SIZE];
 
@@ -20,12 +21,17 @@ static void wiegand_scan_draw(App* app) {
     char levels[24];
     wiegand_levels_text(app->levels, levels, sizeof(levels));
 
-    widget_add_string_element(
-        app->widget, 0, 14, AlignLeft, AlignTop, FontSecondary, "Every read is auto-saved.");
+    if(scan_failed > 0) {
+        snprintf(line, sizeof(line), "SAVE FAILED x%lu: SD card?", scan_failed);
+        widget_add_string_element(app->widget, 0, 14, AlignLeft, AlignTop, FontSecondary, line);
+    } else {
+        widget_add_string_element(
+            app->widget, 0, 14, AlignLeft, AlignTop, FontSecondary, "Every read is auto-saved.");
+    }
     snprintf(line, sizeof(line), "Saved %lu   %s", scan_saved, levels);
     widget_add_string_element(app->widget, 0, 25, AlignLeft, AlignTop, FontSecondary, line);
 
-    if(scan_saved > 0) {
+    if(scan_saved + scan_failed > 0) {
         snprintf(line, sizeof(line), "Last: %d bits", scan_last_bits);
         widget_add_string_element(app->widget, 0, 36, AlignLeft, AlignTop, FontSecondary, line);
         widget_add_string_element(
@@ -33,7 +39,8 @@ static void wiegand_scan_draw(App* app) {
     }
 }
 
-static void wiegand_scan_save_frame(App* app) {
+/* Returns false if the read could not be written to the card. */
+static bool wiegand_scan_save_frame(App* app) {
     DateTime datetime;
     furi_hal_rtc_get_datetime(&datetime);
     snprintf(
@@ -46,17 +53,23 @@ static void wiegand_scan_save_frame(App* app) {
         datetime.hour,
         datetime.minute,
         datetime.second,
-        (scan_saved + 1) % 1000);
-    wiegand_save(app);
+        (scan_saved + scan_failed + 1) % 1000);
+    bool ok = wiegand_save(app);
 
-    scan_saved++;
+    if(ok) {
+        scan_saved++;
+    } else {
+        scan_failed++;
+    }
     scan_last_bits = bit_count;
     wiegand_format_hex(data, bit_count, false, scan_last_hex, sizeof(scan_last_hex));
+    return ok;
 }
 
 void wiegand_scan_scene_on_enter(void* context) {
     App* app = context;
     scan_saved = 0;
+    scan_failed = 0;
     scan_last_bits = 0;
     scan_last_hex[0] = '\0';
     wiegand_scene_capture_start(app);
@@ -70,8 +83,9 @@ bool wiegand_scan_scene_on_event(void* context, SceneManagerEvent event) {
 
     if(event.event == WiegandCaptureFrameEvent) {
         if(wiegand_capture_has_frame()) {
-            wiegand_scan_save_frame(app);
-            notification_message(app->notifications, &sequence_single_vibro);
+            bool ok = wiegand_scan_save_frame(app);
+            notification_message(
+                app->notifications, ok ? &sequence_single_vibro : &sequence_error);
             /* Listen for the next badge. This clears the capture buffer. */
             wiegand_capture_start();
             wiegand_scan_draw(app);

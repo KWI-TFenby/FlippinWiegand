@@ -203,6 +203,17 @@ def main():
             ],
             extra=["-I", os.path.join(HERE, "shim")],
         )
+        file_sim = os.path.join(tmp, "file_sim")
+        build(
+            file_sim,
+            [
+                os.path.join(HERE, "file_sim.c"),
+                os.path.join(ROOT, "wiegand_capture.c"),
+                os.path.join(ROOT, "wiegand_file.c"),
+                os.path.join(ROOT, "wiegand_format.c"),
+            ],
+            extra=["-I", os.path.join(HERE, "shim")],
+        )
         rfid = os.path.join(tmp, "rfid_driver")
         build(rfid, [os.path.join(HERE, "rfid_driver.c"), os.path.join(ROOT, "wiegand_rfid.c")])
 
@@ -380,6 +391,20 @@ def main():
                     True,
                 )
 
+        # Parity warning: H10301 export drops the parity bits, so a 26-bit
+        # frame with wrong parity must be flagged. HIDProx keeps every bit.
+        for fc, cn in [(0, 0), (255, 65535), (159, 6052), (1, 1), (123, 4567), (200, 32768)]:
+            bits = h10301(fc, cn)
+            check(f"rfid parity ok {fc}/{cn}", run_rfid(rfid, bits).get("PARITY"), "OK")
+            for index in (0, 3, 12, 13, 20, 25):
+                check(
+                    f"rfid parity bad {fc}/{cn} bit {index}",
+                    run_rfid(rfid, flip(bits, index)).get("PARITY"),
+                    "BAD",
+                )
+        for n in list(range(1, 26)) + list(range(27, 44)) + [48, 64]:
+            check(f"rfid parity n/a {n}", run_rfid(rfid, "1" * n).get("PARITY"), "OK")
+
         print(f"rfid tests: {checks} checks, {failures} failures (cumulative)")
 
         # 9. Capture simulation.
@@ -388,6 +413,15 @@ def main():
         if result.stderr.strip():
             print(result.stderr.strip())
         sim_failed = result.returncode != 0
+
+        # 10. Capture file text: save, load, a card that fills up.
+        result = subprocess.run(
+            [file_sim, os.path.join(ROOT, "examples", "C1.wgn")], capture_output=True, text=True
+        )
+        print(result.stdout.strip())
+        if result.stderr.strip():
+            print(result.stderr.strip())
+        sim_failed = sim_failed or result.returncode != 0
 
     if failures or sim_failed:
         print("RESULT: FAIL")

@@ -34,6 +34,19 @@ const char* wiegand_rfid_keytype(int n) {
     return NULL;
 }
 
+/* H10301: leading even parity over the first 13 bits, trailing odd parity over
+ * the last 13. Each count includes its own parity bit. */
+bool wiegand_rfid_parity_ok(const volatile bool* bits, int n) {
+    if(n != 26) return true;
+    int first = 0;
+    int last = 0;
+    for(int i = 0; i < 13; i++) {
+        if(bits[i]) first++;
+        if(bits[13 + i]) last++;
+    }
+    return (first % 2) == 0 && (last % 2) == 1;
+}
+
 /* HID 26-bit. LFRFID stores 3 bytes: facility code, card high, card low.
  * (protocol_h10301.c: data[0]=FC, data[1]=CN>>8, data[2]=CN&0xFF.) */
 static void build_h10301(const volatile bool* bits, uint8_t* out, size_t* out_len) {

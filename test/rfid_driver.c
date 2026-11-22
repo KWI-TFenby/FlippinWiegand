@@ -23,6 +23,8 @@ int main(int argc, char** argv) {
     const char* keytype = NULL;
     char reason[64];
 
+    printf("PARITY<%s>\n", wiegand_rfid_parity_ok(bits, n) ? "OK" : "BAD");
+
     if(!wiegand_rfid_build(bits, n, out, &len, &keytype, reason, sizeof(reason))) {
         printf("UNSUPPORTED<%s>\n", reason);
         return 0;

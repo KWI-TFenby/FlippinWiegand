@@ -6,7 +6,9 @@ Thoroughness of review: [0-100%]
 
 Status table and Install section revised by Claude Opus 4.8 and Claude Fable
 5.2 on 2026-11-22 for the Unleashed build. RFID export (the "To RFID" button
-and this doc's export section) added by Claude Opus 4.8 on 2026-11-22.
+and this doc's export section) added by Claude Opus 4.8 on 2026-11-22. Save,
+load and export fixes (failed saves reported, warnings kept on load, no silent
+overwrite, export warnings) by Claude Fable 5.2 Medium on 2026-11-22.
 
 A read-only Flipper Zero app that shows exactly what a reader puts on its
 Wiegand lines: every bit, whatever the length, with hex, a format guess and
@@ -20,10 +22,11 @@ It is a fork of the **Wiegand** app by Derek Jamison
 
 | Check | Result |
 |---|---|
-| Builds against Unleashed `unlshd-095` (API 88.26) with `ufbt` | Pass |
-| Builds against official firmware 1.5.1 (API 88.2) with `ufbt` | Pass |
+| Builds against Unleashed `unlshd-095` (API 88.26) with `ufbt` | Passed before the save/load fixes; **not rebuilt since** |
+| Builds against official firmware 1.5.1 (API 88.2) with `ufbt` | Passed before the save/load fixes; **not rebuilt since** |
 | Formatting and decoding, 4,282 checks on a PC | Pass |
-| RFID export, 716 checks on a PC (incl. round-trip through the firmware's own HID length decoder) | Pass |
+| RFID export, 802 checks on a PC (incl. round-trip through the firmware's own HID length decoder) | Pass |
+| Capture file text, 1,332 checks on a PC: save then load at every length, a card that fills up, a file from the original app | Pass |
 | Capture logic against simulated D0/D1 edges, 808 checks on a PC | Pass |
 | Run on a real Flipper against a real reader | **Not done** |
 
@@ -91,6 +94,11 @@ Other rules:
 Copy `dist/wiegand_raw.fap` to the SD card at `apps/GPIO/` with qFlipper or the
 mobile app. It appears under Apps, GPIO, **Wiegand Raw**.
 
+**The supplied `dist/wiegand_raw.fap` is older than the source.** It was built
+before the save, load and export fixes of 2026-11-22 and does not have them:
+it still reports a failed save as saved. Rebuild with the steps below before
+relying on it.
+
 The supplied `dist/wiegand_raw.fap` is built for **Unleashed `unlshd-095`**. If
 the Flipper says the app is out of date, rebuild it on a PC with Python
 installed. This build needs firmware with API 88.26 or later in the 88 series:
@@ -137,6 +145,12 @@ Left button saves the capture (`.wgn`). Right button, "To RFID", exports it to
 the stock 125 kHz RFID app (see below). The button shows only when the length
 maps to an RFID key type. Back returns to waiting for the next read.
 
+A save that works shows `Saved <name>.wgn` under the bit count and the Save
+button goes away. If the name is already on the card, or the file cannot be
+written (no SD card, card full), the keyboard stays up and its heading says
+`Name already used` or `Save failed: SD?`. Nothing is overwritten and the
+capture is still in memory, so fix the name or the card and save again.
+
 **Cable Test.** Badge one card about 20 times. The first read is the
 reference; each later read is OK if it matches bit for bit, Bad if not. Green
 flash for OK, red flash and a double buzz for Bad. Centre button resets. If the
@@ -149,10 +163,16 @@ mean the cable is slowing the edges. Compare the two ends with each other, not
 with a datasheet number.
 
 **Scan w/AutoSave.** Saves every read to its own file without asking. For
-logging a stack of cards.
+logging a stack of cards. `Saved` counts only the files that were really
+written. A read that could not be written gives the error buzz and
+`SAVE FAILED xN: SD card?` on screen: those reads are gone, so check the card
+before carrying on.
 
 **Load.** Opens a saved capture. Files saved by the original app use the same
 `RAW_Data` layout and should load if you copy them into this app's folder.
+The `TRUNCATED` and `Glitches` warnings saved with a capture come back with
+it. `FILE DAMAGED? Says N bits` means the file's `Bits:` line does not match
+the bits it holds: it was edited or cut short, so do not trust it.
 
 ### Export to the RFID app ("To RFID")
 
@@ -168,13 +188,19 @@ Only lengths that map to an RFID key type can be exported:
 |---|---|---|
 | 26 | `H10301` | Facility code and card number, parsed |
 | 27–43 | `HIDProx` | "N-bit HID Proximity" and the hex; no field parse |
-| everything else | not exported | the button is hidden; a press elsewhere explains why |
+| everything else | not exported | the button is hidden |
 
 Notes and limits:
 
 - **26-bit is the one that gains field decoding.** For 27–43 bits the RFID app
   only shows length and hex, which this app already shows; the value there is
   getting the read into the `.rfid` ecosystem.
+- **A 26-bit export can look better than the read was.** `H10301` stores only
+  the facility code and card number, and the RFID app works the parity out
+  again. A misread with wrong parity therefore exports as a clean card. The
+  app warns when it does this (`WARNING: bad parity not kept`) and when the
+  read had glitches (`WARNING: read had glitches`). Treat such a file as
+  suspect.
 - **48-bit and longer cannot be exported.** The Flipper's generic HID key holds
   44 data bits, so 48-bit Corporate 1000 and anything longer has no correct
   target. Use the `.wgn` save and the hex instead.
@@ -182,7 +208,7 @@ Notes and limits:
 - The byte layouts were taken from the Unleashed firmware and the 27–43-bit
   length prefix is checked in the test suite against a copy of the firmware's
   own length decoder. Still, **confirm one real card end to end on the bench**
-  (step 10 below) before relying on it.
+  (step 11 below) before relying on it.
 - Exported files are working credentials, the same as `.wgn` files. Delete them
   when the job is done.
 
@@ -235,7 +261,8 @@ Hex_Left_Justified: 02D168C
 ```
 
 `RAW_Data` is each bit's fall and rise time in 1/64 microsecond ticks from the
-first edge.
+first edge. A file is either written whole or not left on the card: one that
+could not be finished is removed.
 
 **These files are working credentials.** Delete them when the job is done.
 
@@ -260,13 +287,16 @@ On a bench, with a reader you know is good and a card you know the number of:
 3. Badge the known card: bit count, facility code and card number are right,
    and parity is OK.
 4. Scroll the result: text is readable and nothing is cut off at the edges.
-5. Save it, then **Load** it: same bits.
+5. Save it, then **Load** it: same bits. Save again under the same name: the
+   keyboard must refuse with `Name already used`.
 6. Pull the SD card and read the `.wgn` file on a PC: lines as shown above.
 7. **Cable Test** with 20 badges: 20 OK, 0 Bad, pulse range a few
    microseconds wide.
 8. Badge a second, different card in Cable Test: it counts as Bad.
 9. Check the door still works normally with the Flipper attached.
-10. With a 26-bit card: on the result screen press **To RFID**, then open the
+10. Pull the SD card, open **Scan w/AutoSave** and badge once: error buzz,
+    `SAVE FAILED x1`, and `Saved 0`. Put the card back.
+11. With a 26-bit card: on the result screen press **To RFID**, then open the
     stock RFID app and load the file from `lfrfid/`. The facility code and card
     number must match the Wiegand read. (This is the one export step worth
     verifying; the longer formats only carry length and hex.)
@@ -278,10 +308,12 @@ python3 test/run_tests.py
 ```
 
 Needs `gcc`. It checks formatting and decoding against values worked out
-separately in Python, runs the capture logic against simulated edges, and
-checks the RFID export, feeding each generated `HIDProx` buffer back through a
-copy of the firmware's own HID length decoder. Nothing in `test/` is built into
-the app.
+separately in Python, runs the capture logic against simulated edges, checks
+the RFID export, feeding each generated `HIDProx` buffer back through a copy
+of the firmware's own HID length decoder, and checks the capture file text by
+saving to and loading from memory. The storage calls themselves, the name
+check and the screens are not covered: those need a Flipper. Nothing in
+`test/` is built into the app.
 
 ## Files
 
@@ -289,6 +321,7 @@ the app.
 |---|---|
 | `wiegand_capture.c` | Interrupt capture of D0/D1 pulses |
 | `wiegand_format.c` | Binary, hex and format decode (no Flipper code) |
+| `wiegand_file.c` | Writes and reads `.wgn` text (no storage calls) |
 | `wiegand_rfid.c` | Builds `.rfid` export Data bytes (no Flipper code) |
 | `scenes/` | One file per screen |
 | `test/` | PC-side tests |

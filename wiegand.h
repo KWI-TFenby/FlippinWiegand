@@ -21,6 +21,7 @@
 #include <dialogs/dialogs.h>
 #include <storage/storage.h>
 
+#include "wiegand_file.h"
 #include "wiegand_format.h"
 #include "wiegand_rfid.h"
 
@@ -92,7 +93,7 @@ typedef struct App {
     FuriTimer* timer;
     volatile uint8_t levels; /* last idle levels shown: bit0 = D0, bit1 = D1 */
     uint8_t level_divider;
-    char rfid_status[64]; /* last .rfid export result, shown on the data screen */
+    char status[128]; /* last save, load or export result, shown on the data screen */
 } App;
 
 typedef enum {
@@ -174,7 +175,7 @@ void wiegand_scan_scene_on_exit(void* context);
 void wiegand_data_scene_on_enter(void* context);
 bool wiegand_data_scene_on_event(void* context, SceneManagerEvent event);
 
-void wiegand_save(void* context);
+bool wiegand_save(void* context);
 void wiegand_export_rfid(void* context);
 void wiegand_save_scene_on_enter(void* context);
 bool wiegand_save_scene_on_event(void* context, SceneManagerEvent event);
